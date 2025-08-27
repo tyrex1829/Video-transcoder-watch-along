@@ -4,6 +4,9 @@ import { userMiddleware } from "../middleware/userMiddleWare";
 import { VideoSchema } from "../types";
 import amqp from "amqplib";
 import { VideoStatus } from "@prisma/client";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { s3 } from "../s3";
 export const videoRouter: Router = Router();
 
 interface VideoJobData {
@@ -65,6 +68,37 @@ videoRouter.get("/feed", async (req: any, res: any) => {
     return res.status(500).json({
       message: "Internal server error",
     });
+  }
+});
+
+videoRouter.post("/upload-url", async (req: any, res: any) => {
+  try {
+    const { fileName, fileType, userId, title, price } = req.body;
+
+    const key = `uploads/${userId}/${Date.now()}-${fileName}`;
+
+    const command = new PutObjectCommand({
+      Bucket: process.env.AWS_BUCKET!,
+      Key: key,
+      ContentType: fileType,
+    });
+
+    const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    // Save metadata (without file yet — it will be uploaded by frontend)
+    const content = await client.content.create({
+      data: {
+        title,
+        price: Number(price),
+        fileUrl: key, // store KEY, not full URL
+        userId,
+      },
+    });
+
+    res.json({ uploadUrl, fileKey: key, content });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Error generating upload URL" });
   }
 });
 
